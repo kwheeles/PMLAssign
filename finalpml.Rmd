@@ -1,0 +1,127 @@
+---
+title: "PML Final Assignment"
+author: "Keith Wheeles"
+date: "January 28, 2016"
+output: html_document
+---
+
+
+## Weight Lifting Exercises Dataset  
+
+This human activity recognition research has traditionally focused on discriminating between different activities, i.e. to predict "which" activity was performed at a specific point in time (like with the Daily Living Activities dataset above). The approach we propose for the Weight Lifting Exercises dataset is to investigate "how (well)" an activity was performed by the wearer. The "how (well)" investigation has only received little attention so far, even though it potentially provides useful information for a large variety of applications,such as sports training.
+
+In this work (see the paper) we first define quality of execution and investigate three aspects that pertain to qualitative activity recognition: the problem of specifying correct execution, the automatic and robust detection of execution mistakes, and how to provide feedback on the quality of execution to the user. We tried out an on-body sensing approach.
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).  
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg).  
+
+## Get and Clean Data
+
+Read in training and testing sets.  Remove summary records and non-predictor variables, and collumns with all NAs.
+Break training set down into training (70%) and validation (30%) sets.  
+
+```{r cache=TRUE, message=FALSE}
+require(caret)
+require(rpart)
+require(rattle)
+require(randomForest)
+require(e1071)
+set.seed(1)
+
+# function accepts "training" or "testing"
+# keep rows with new_window == "no", these are the detail record, "yes" is summary record
+# remove first 7 columns which do not contain predictors
+# remove columns with all NAs
+tidyData <- function(type="train") {
+        path <- paste("../Hopkins/MachLearn/PMLAssign/pml-",type,".csv",sep="")
+        df <- read.csv(path,na.strings=c('','NA','#DIV/0!'))
+        df <- df[df$new_window=='no',]
+        df <- df[,-1:-7]
+        df <- df[,colSums(is.na(df))==0]
+}
+
+training <- tidyData("training")
+inTrain <- createDataPartition(y=training$classe,p=0.7,list=FALSE)
+valid <- training[-inTrain,]
+training <- training[inTrain,]
+testing <- tidyData("testing")
+```
+
+## Exploring Models
+
+Initially simple versions of several models were tried.  Given that later models appeared much more powerful, I did
+not devote time to tweaking the parameters of each of these.  Some **initial** (based on first run) accuracies were:  
+
+Accuracy    |    Model Type                                            
+----------  |  ------------------------------------------------------  
+  0.51      |  rpart: Recursive Partitioning and Regression Trees  
+  0.52      |  rpart with preprocessing to center and scale data  
+  0.70      |  lda: Linear Discriminant Analysis  
+  0.74      |  nb: Naive Bayes  
+  0.90      |  knn: K Nearest Neighbors  
+  0.94      |  svm: Support Vector Machines  
+  0.99      |  rf: Random Forest  
+  
+```{r eval=FALSE}
+modrpart <- train(classe~.,method="rpart",data=training)
+# modrpart accuracy 0.51 (first run)
+modctr <- train(classe~.,method="rpart",data=training,preProcess=c("center","scale"))
+# modctr accuracy 0.52 (first run)
+#linear discriminant analysis
+modlda <- train(classe~.,data=training,method="lda")
+# modlda accuracy 0.70 (first run)
+modnb <- train(classe~.,data=training,method="nb")
+# modnb accuracy 0.74 (first run)ctrl <- trainControl(method="repeatedcv",repeats=3)
+ctrl <- trainControl(method="repeatedcv",repeats=3)
+modknn <- train(classe~.,method="knn",data=training,trControl=ctrl)
+# modknn accuracy 0.90 (first run)
+#svm
+modsvm <- svm(classe ~., data=training)
+#modsvm accuracy 0.94 (first run)
+
+# clear memory
+rm(modrpart,modctr,modlda,modnb,ctrl,modknn,modsvm)
+```
+
+The Random Forest was selected as the final model.  Cross validation was performed against the data retained for
+that purpose (30% of the training data).  The model achieved 99.3% accuracy against the validation set, very
+similar to its performance on the initial training set.  This does not suggest overfitting as a possible problem.  
+
+The Random Forest algorithm performs bootstrapping on the sample (25 times in this case), resampling the
+training data set, and then boostrapping the variable choice as well.  In the final model, 52 predictors were
+included.
+
+
+```{r cache=TRUE}
+# Final Model
+modrf <- train(classe~.,method="rf",data=training)
+# modrf accuracy 0.988 (firt run)
+#   performance against cross validation (valid data set) 99.3% accuracy
+
+modrf$finalModel
+
+pvalid <- predict(modrf,valid)
+confusionMatrix(table(pvalid,valid$classe))
+
+ptest <- predict(modrf,testing)
+ptest
+```
+
+The predictions above were submitted as part of the quiz and were 100% accurate.  
+
+We look at the overall prevalence versus predicted prevalence below.  Interpretation of the model is not
+straightforward, so I looked at relative prevalences, since the class is the one variable I can understand
+in each record or observation.  
+
+```{r echo=FALSE}
+trnprev <- table(training$classe)/sum(table(training$classe))
+valprev <- table(valid$classe)/sum(table(valid$classe))
+tstprev <- table(ptest)/sum(table(ptest))
+prevdf <- data.frame(as.numeric(trnprev),as.numeric(valprev),as.numeric(tstprev))
+colnames(prevdf) <- c("Training","Validation","Testing (predicted")
+rownames(prevdf) <- c("A","B","C","D","E")
+cat("Relative Prevalance")
+prevdf
+
+```
